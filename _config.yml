@@ -21,6 +21,7 @@ author: zkMove
 
 navbar-links:
   Home: "/"
+  Document: "https://www.zkmove.net/zkmove/"
   Tech Blog: "/blog/"
   About: "/about/"
   Join us: "/joinus/"
