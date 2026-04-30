@@ -1,0 +1,191 @@
+---
+layout: post
+title:  "zkMove v0.5: Programmable Privacy for Move Smart Contracts"
+cover-img: /assets/img/blog/blog8.png
+thumbnail-img: /assets/img/blog/blog8-thumbnail.png
+date:   2026-04-30 12:00:00 +0800
+categories: release
+---
+
+We are excited to announce the official release of **zkMove v0.5**. This update reduces proof generation time to **under 1 second** and proof size to **25 KB**. This significant performance breakthrough marks a major milestone in zkMove’s journey from proof-of-concept toward production readiness, bringing us much closer to enabling Move developers to build privacy-preserving applications with ease.
+
+We have long claimed that zkMove supports programmable privacy — but until now, we lacked concrete, real-world use cases to demonstrate it. Today, we can finally show what zkMove is capable of in the domain of smart contract privacy.
+
+## Privacy: The Next Core Challenge for Blockchain
+
+Blockchain performance has improved dramatically over the past few years. The Ethereum ecosystem has scaled vertically through Layer 2, while high-performance chains like Solana, Sui, and Aptos have pushed throughput to new heights through horizontal scaling. With performance largely addressed, **privacy** has emerged as the next critical frontier.
+
+The inherently public nature of blockchain exposes users' asset balances, transaction behavior, and operational intent in full. This gives malicious actors a persistent surveillance advantage — and turns the entire network into something resembling the scenario described in Liu Cixin's *The Dark Forest*: in a universe where advanced civilizations may exist, the most rational survival strategy is to **never reveal your position**.
+
+As blockchain is increasingly positioned as the trusted coordination layer of the **Agentic Economy**, the need for robust privacy protection becomes even more urgent. Without sound privacy mechanisms, smart contracts will struggle to support meaningful value transfer and complex coordination.
+
+## zkMove: A Programmable Privacy zkVM for Move
+
+**zkMove** is a high-performance zero-knowledge virtual machine purpose-built for the Move programming language. It enables Move smart contracts to process private data in a **fully programmable**, **trustless** manner. As a product, zkMove serves as both middleware and a developer SDK. Its core strength lies in a **hybrid on-chain/off-chain computation model**:
+
+- Developers extract privacy-sensitive logic into **off-chain functions**;
+- Users execute these functions locally on the client and generate zero-knowledge proofs;
+- The proofs are submitted to on-chain contracts for verification; the chain only handles public logic and proof validation.
+
+This model preserves Move's performance and security guarantees while giving developers true **programmable privacy**. Even without a deep background in cryptography, Move developers can quickly build privacy-preserving applications.
+
+## Example 1: Confidential Assets
+
+**Confidential Assets (CA)** allow digital assets to be stored and transferred on-chain in encrypted form, visible only to authorized parties — protecting users' financial privacy without sacrificing verifiability.
+
+The example below shows a small partial implementation of a confidential asset smart contract. It allows a user to prove that their asset balance falls within a given range `[min, max]` without revealing the actual amount.
+
+**On-Chain Contract**
+
+The on-chain contract receives the user-submitted proof and verifies it against the encrypted asset value:
+
+```move
+module confidential_asset::on_chain {
+    use aptos_std::bn254_algebra::Fr;
+    use halo2_common::public_inputs;
+    use verifier_api::verifier;
+
+    // Error codes
+    const EINVALID_PROOF: u64 = 100;
+    const EINVALID_INPUT: u64 = 101;
+
+    public entry fun range_check(
+        encrypted_value: u256,
+        min: u128,
+        max: u128,
+        proof: vector<u8>
+    ) {
+        assert!(min <= max, EINVALID_INPUT);
+
+        // Verify: "encrypted_value is an encryption of a value in range [min, max]"
+        let pi = public_inputs::empty<Fr>(public_inputs::get_vm_public_inputs_column_count());
+        public_inputs::push_u128(&mut pi, min);
+        public_inputs::push_u128(&mut pi, max);
+        public_inputs::push_u256(&mut pi, encrypted_value);
+
+        assert!(
+            verifier::verify_proof(
+                @param_address,
+                @circuit_range_check_address,
+                pi,
+                proof,
+            ),
+            EINVALID_PROOF
+        );
+    }
+}
+```
+
+**Off-Chain Function**
+
+The actual asset amount is stored on the user's client. The user executes the following off-chain function locally to generate a proof that the value lies within `[min, max]`. Only the encrypted value (hash) and the proof are submitted on-chain — the raw balance is never exposed.
+
+```move
+module confidential_asset::off_chain {
+    use std::zkhash;
+
+    const E_INVALID_ENCRYPTION: u64 = 0;
+    const E_INVALID_INPUT: u64 = 1;
+
+    // Public inputs: min, max, encrypted_value
+    public entry fun check_range(
+        value: u128,
+        min: u128,
+        max: u128,
+        encrypted_value: u256,
+        nonce: u128
+    ) {
+        assert!(value >= min && value <= max, E_INVALID_INPUT);
+        assert!(zkhash::hash(value, nonce) == encrypted_value, E_INVALID_ENCRYPTION);
+    }
+}
+```
+
+The complete example is available in the [zkMove repository](https://github.com/zkmove/zkmove).
+
+## Example 2: Incomplete-Information Games (Dark Forest)
+
+zkMove can be used to build on-chain **incomplete-information games**, where players can hide their true position or state while using zero-knowledge proofs to guarantee that their moves comply with the game rules.
+
+A typical scenario: a Dark Forest-style on-chain game where players can prove that their movement distance is valid without revealing their coordinates. The on-chain contract only verifies the zero-knowledge proof; the off-chain function computes the distance locally and generates the proof.
+
+**On-Chain Contract**
+
+```move
+module dark_forest::on_chain {
+    use aptos_std::bn254_algebra::Fr;
+    use halo2_common::public_inputs;
+    use verifier_api::verifier;
+
+    const E_INVALID_COORDINATES: u64 = 0;
+
+    /// Moves a player from position (x1, y1) to (x2, y2), verifying the Euclidean distance
+    /// using a zero-knowledge proof.
+    ///
+    /// # Arguments
+    /// * `hash_1`           - Poseidon hash of the player's current position (x1, y1)
+    /// * `hash_2`           - Poseidon hash of the target position (x2, y2)
+    /// * `distance_squared` - Squared Euclidean distance between the two positions
+    /// * `proof`            - Zero-knowledge proof generated by the Euclidean distance circuit
+    public entry fun move_to(
+        hash_1: u256,
+        hash_2: u256,
+        distance_squared: u128,
+        proof: vector<u8>,
+    ) {
+        let pi = public_inputs::empty<Fr>(public_inputs::get_vm_public_inputs_column_count());
+
+        public_inputs::push_u256(&mut pi, hash_1);
+        public_inputs::push_u256(&mut pi, hash_2);
+        public_inputs::push_u128(&mut pi, distance_squared);
+
+        assert!(
+            verifier::verify_proof(
+                @param_address,
+                @circuit_euclid_distance_address,
+                pi,
+                proof,
+            ),
+            E_INVALID_COORDINATES
+        );
+    }
+}
+```
+
+**Off-Chain Function**
+
+```move
+module dark_forest::euclid_distance {
+    use std::zkhash;
+
+    const E_INVALID_COORDINATES: u64 = 0;
+
+    /// Euclidean distance squared (no sqrt needed).
+    /// Public inputs: hash_1, hash_2, distance_squared
+    public entry fun check_euclid_distance(
+        x1: u128, y1: u128,
+        x2: u128, y2: u128,
+        hash_1: u256, hash_2: u256,
+        distance_squared: u128
+    ) {
+        assert!(zkhash::hash(x1, y1) == hash_1, E_INVALID_COORDINATES);
+        assert!(zkhash::hash(x2, y2) == hash_2, E_INVALID_COORDINATES);
+        let dx = if (x1 > x2) { x1 - x2 } else { x2 - x1 };
+        let dy = if (y1 > y2) { y1 - y2 } else { y2 - y1 };
+        let expected_distance_squared = dx * dx + dy * dy;
+        assert!(distance_squared == expected_distance_squared, E_INVALID_COORDINATES);
+    }
+}
+```
+
+## Summary and Outlook
+
+zkMove currently prioritizes **Confidentiality**, enabling support for privacy assets and incomplete information game use cases. Moving forward, we plan to explore more advanced privacy primitives such as anonymity, unlinkability, function privacy, and multi-party secure computation (MPC).
+
+Get started with zkMove:
+- Want to quickly create a zkMove circuit, generate proofs, and verify them on-chain?
+  Visit the [User Guide](https://www.zkmove.net/zkmove/user/setup-dev-environment/)
+- Want a deeper understanding of zkMove's overall architecture?
+  Read the zkMove [litepaper](https://www.zkmove.net/zkmove/litepaper/abstract/)
+
+We believe that **performance + privacy** will be the core competitive edge of next-generation smart contract platforms. Together with developers in the Move ecosystem, zkMove is driving the transition toward a new era of programmable privacy.
